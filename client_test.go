@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -169,6 +170,47 @@ func TestClient_testInterface(t *testing.T) {
 	// Test that it knows it is exited
 	if !c.Exited() {
 		t.Fatal("should say client has exited")
+	}
+}
+
+func TestClient_grpc_keepAliveEnabled(t *testing.T) {
+	process := helperProcess("test-grpc")
+	c := NewClient(&ClientConfig{
+		Cmd:              process,
+		HandshakeConfig:  testHandshake,
+		Plugins:          testPluginMap,
+		AllowedProtocols: []Protocol{ProtocolGRPC},
+		ConnectionConfig: &ConnectionConfig{
+			EnableKeepAlive:        true,
+			KeepAliveInterval:      1 * time.Millisecond,
+			ConnectionWriteTimeout: 100 * time.Millisecond,
+		},
+	})
+	defer c.Kill()
+
+	// Grab the RPC client
+	client, err := c.Client()
+	if err != nil {
+		t.Fatalf("err should be nil, got %s", err)
+	}
+
+	// Grab the impl
+	raw, err := client.Dispense("test")
+	if err != nil {
+		t.Fatalf("err should be nil, got %s", err)
+	}
+
+	_, ok := raw.(testInterface)
+	if !ok {
+		t.Fatalf("bad: %#v", raw)
+	}
+
+	c.process.Signal(syscall.SIGSTOP)
+
+	select {
+	case <-c.doneCtx.Done():
+	case <-time.After(time.Second * 2):
+		t.Fatal("Context was not closed")
 	}
 }
 
