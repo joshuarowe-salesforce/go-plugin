@@ -82,6 +82,7 @@ type Client struct {
 	protocol    Protocol
 	logger      hclog.Logger
 	doneCtx     context.Context
+	ctxCancel context.CancelFunc
 }
 
 // ClientConfig is the configuration used to initialize a new
@@ -183,13 +184,14 @@ type ClientConfig struct {
 	// You cannot Reattach to a server with this option enabled.
 	AutoMTLS bool
 
-	// Specify some properties of the underlying connection, including keepalive.
-	ConnectionConfig *ConnectionConfig
+	// NetRpcConfig allows configuring some properties of the connection
+	// if the protocol is ProtocolNetRPC.
+	NetRPCConfig *NetRPCConfig
 }
 
-// ConnectionConfig allows providing properties of an underlying connection
-// via the ClientConfig.ConnectionConfig field.
-type ConnectionConfig struct {
+// NetRPCConfig allows providing properties of an underlying connection
+// via the ClientConfig.NetRPCConfig field.
+type NetRPCConfig struct {
 	// EnableKeepalive is used to do a period keep alive
 	// messages using a ping.
 	EnableKeepAlive bool
@@ -282,9 +284,9 @@ func CleanupClients() {
 	wg.Wait()
 }
 
-func DefaultConnectionConfig() (connectionConfig *ConnectionConfig) {
+func DefaultNetRPCConfig() (netRPCConfig *NetRPCConfig) {
 	defaultYamuxConfig := yamux.DefaultConfig()
-	return &ConnectionConfig{
+	return &NetRPCConfig{
 		ConnectionWriteTimeout: defaultYamuxConfig.ConnectionWriteTimeout,
 		EnableKeepAlive:        defaultYamuxConfig.EnableKeepAlive,
 		KeepAliveInterval:      defaultYamuxConfig.KeepAliveInterval,
@@ -479,8 +481,7 @@ func (c *Client) Start() (addr net.Addr, err error) {
 	// Create the logging channel for when we kill
 	c.doneLogging = make(chan struct{})
 	// Create a context for when we kill
-	var ctxCancel context.CancelFunc
-	c.doneCtx, ctxCancel = context.WithCancel(context.Background())
+	c.doneCtx, c.ctxCancel = context.WithCancel(context.Background())
 
 	if c.config.Reattach != nil {
 		// Verify the process still exists. If not, then it is an error
@@ -517,7 +518,7 @@ func (c *Client) Start() (addr net.Addr, err error) {
 			close(c.doneLogging)
 
 			// Cancel the context
-			ctxCancel()
+			c.ctxCancel()
 		}(p.Pid)
 
 		// Set the address and process
@@ -597,7 +598,7 @@ func (c *Client) Start() (addr net.Addr, err error) {
 		close(exitCh)
 
 		// Cancel the context, marking that we exited
-		ctxCancel()
+		c.ctxCancel()
 
 		// Set that we exited, which takes a lock
 		c.l.Lock()
